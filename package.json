@@ -7,7 +7,6 @@
     "test": "npx nodemon index.js --port=5000 --debug",
     "start": "node index.js"
   },
-  "type": "module",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/comp426-2022-spring/a05-johnmar3.git"
@@ -34,6 +33,7 @@
     "express": "^4.17.3",
     "minimist": "^1.2.6",
     "morgan": "^1.10.0",
-    "nodemon": "^2.0.15"
+    "nodemon": "^2.0.15",
+    "cors":"^2.0.15"
   }
 }

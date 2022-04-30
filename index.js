@@ -1,41 +1,131 @@
-app.use(express.json());
-
 const express = require('express');
 const minimist = require('minimist');
-const arg = minimist(process.argv.slice(2))
-
+const morgan = require('morgan');
+const db = require('./src/services/database.js');
+const fs = require('fs');
+const crossOrg = require('cors');
 
 const app = express();
-
-const fs = require('fs');
-const db = require('./src/services/database.js');
-
-const morgan = require('morgan');
+const args = minimist(process.argv.slice(2));
 
 app.use(express.static('./public'));
+app.use(crossOrg());
+app.use(express.json());
+args["port","help","debug"]
 
-args["help","port","debug","log"]
-if (args.help || args.h) {
-    const help = (`
-    server.js [options]
-    
-    --port	Set the port number for the server to listen on. Must be an integer
-                between 1 and 65535.
-    
-    --debug	If set to true, creates endlpoints /app/log/access/ which returns
-                a JSON access log from the database and /app/error which throws 
-                an error with the message "Error test successful." Defaults to 
-                false.
-    
-    --log		If set to false, no log files are written. Defaults to true.
-                Logs are always written to database.
-    
-    --help	Return this message and exit.
-    `)
-    console.log(help)
+const HTTP = args.port || 5000;
+
+if (args.help) {
+    const msg = (
+      ```
+
+--port, -p	Set the port number for the server to listen on. Must be an integer
+between 1 and 65535. Defaults to 5000.
+
+--debug, -d If set to true, creates endlpoints /app/log/access/ which returns a JSON access log from the database and /app/error which throws  an error with the message "Error test successful." Defaults to false.
+
+--log, -l   If set to false, no log files are written. Defaults to true. Logs are always written to database.
+
+--help, -h	Return this message and exit.
+
+```)
+    console.log(msg)
     process.exit(0)
 }
 
+log = true;
+debug = false;
+if(args.debug) {debug =true;}
+if(!args.log) {log=false;}
+
+//------------------------START THE SERVER-----------------------
+const server = app.listen(HTTP, () => {
+  console.log("Dice Roller listening to port %PORT%".replace('%PORT%', HTTP))
+});
+
+//--------------------------------DATABASe----------------------
+app.use((req, res, next) => {
+    let logdata = {
+            remoteaddr: req.ip,
+            remoteuser: req.user,
+            time: Date.now(),
+            method: req.method,
+            url: req.url,
+            protocol: req.protocol,
+            httpversion: req.httpVersion,
+            status: res.statusCode,
+            referer: req.headers['referer'],
+            useragent: req.headers['user-agent']
+        };
+        const stmt = db.prepare('INSERT INTO accesslog (remoteaddr, remoteuser, time, method, url, protocol, httpversion, status, referer, useragent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        const insertInfo = stmt.run(logdata.remoteaddr, logdata.remoteuser, logdata.time, logdata.method, logdata.url, logdata.protocol, logdata.httpversion, logdata.status, logdata.referrer, logdata.useragent)
+        next();
+    });
+
+//------------------------------------DEBUg----------------
+if (debug != false) {
+    app.get('/app/log/access', (req, res) => {
+      const select_statement = db.prepare('SELECT * FROM accesslog').all();
+      res.status(200).json(select_statement);
+  });
+
+  app.get('/app/error', (req, res) => {
+    throw new Error('Error test successful.')
+  });
+}
+
+if (log == true) {
+  const WRITESTREAM = fs.createWriteStream('FILE', { flags: 'a' })
+  app.use(morgan('combined', { stream: WRITESTREAM }))
+} 
+
+//----------------------------------ENDPOINTS-----------------
+app.get('/app/', (req, res) => {
+  res.status(200).json({"message":"API functional (200)"});
+});
+
+app.get('/app/flip/', (req, res) => {
+    let result = coinFlip();
+    res.status(200).json({"flip": result});
+    console.log(res.getHeaders());
+});
+
+app.get('/app/flip/:number', (req, res) => {
+    let num = req.params.number;
+    let coinFlips = coinFlips(num);
+    let flipsCount = countFlips(coinFlips);
+    res.status(200).json(
+      {"raw":coinFlips, "summary":flipsCount}
+    );
+    console.log(res.getHeaders());
+});
+
+app.get('/app/flip/call/:guess(heads|tails)', (req, res) => {
+    let game = flipACoin(req.params.guess);
+    res.status(200).json(game);
+})
+
+app.post('/app/flip/coins',(req,res,next)=> 
+{
+  let num = req.params.number;
+  let flips = coinFlips(num);
+  let count = countFlips(flips);
+  res.status(200).json({"raw":flips, "summary":count});
+});
+
+
+app.use(function(req, res){
+  res.status(404).send('404 NOT FOUND')
+});
+
+
+process.on('SIGTERM', () => {
+    server.close(() => {
+        console.log('Server stopped')
+    })
+})
+
+//--------------------COINFLIP FROM OTHER CLASS---------------------
 /** Coin flip functions 
  * This module will emulate a coin flip given various conditions as parameters as defined below
  */
@@ -156,103 +246,4 @@ function coinFlip() {
   }
 
 
-var port = 'port'
-const HTTP = args.port || process.env.PORT || 5000
 
-const log = args.log || true
-if (log != "false") {
-    const accesslog = fs.createWriteStream('access.log',{flags:'a'})
-    app.use(morgan('combined',{stream:accesslog}))
-}
-const debug = args.debug || false
-const server = app.listen(HTTP, () => {
-  console.log("App listening on port %PORT%".replace('%PORT%', HTTP))
-});
-
-//ENDPOINTS etc
-
-app.use((req, res, next) => {
-    let logdata = {
-            remoteaddr: req.ip,
-            remoteuser: req.user,
-            time: Date.now(),
-            method: req.method,
-            url: req.url,
-            protocol: req.protocol,
-            httpversion: req.httpVersion,
-            status: res.statusCode,
-            referer: req.headers['referer'],
-            useragent: req.headers['user-agent']
-        };
-        const stmt = db.prepare('INSERT INTO accesslog (remoteaddr, remoteuser, time, method, url, protocol, httpversion, status, referer, useragent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-        const table_info = stmt.run(String(logdata.remoteaddr), String(logdata.remoteuser), String(logdata.time), String(logdata.method), String(logdata.url), String(logdata.protocol), String(logdata.httpversion), String(logdata.status), String(logdata.referrer), String(logdata.useragent))
-        next();
-    });
-
-app.get('/app/', (req, res) => {
-      res.statusCode = 200;
-      res.statusMessage = 'OK';
-      res.writeHead( res.statusCode, { 'Content-Type' : 'text/plain' });
-      res.end(res.statusCode+ ' ' +res.statusMessage)
-    });
-
-app.get('/app/flip', (req, res) => {
-    res.status(200)
-    res.type('text/plain')
-    res.json({'flip': coinFlip()})
-})
-
-app.get('/app/flips/:number', (req, res) => {
-    res.status(200)
-    var flipsArray = coinFlips(req.body.number)
-    res.json({'raw': flipsArray, 'summary': countFlips(flipsArray)})
-})
-
-app.get('/app/flip/call/heads', (req, res) => {
-    res.status(200)
-    res.json(flipACoin("heads"))
-})
-
-app.get('/app/flip/call/tails', (req, res) => {
-    res.status(200)
-    res.json(flipACoin("tails"))
-})
-
-app.post('/app/flips/coins',(req,res,next)=> 
-{
-const result = coinFlips(parseInt(req.body.number))
-const count = countFlips(result)
-res.status(200).json({"raw":result, "summary":count})
-})
-
-app.post('/app/flip/call/', (req, res, next) => {
-    const game = flipACoin(req.body.guess)
-    res.status(200).json(game)
-})
-
-
-app.use(function(req, res){
-  res.status(404).send('404 NOT FOUND')
-  res.type('text/plain')
-});
-
-
-process.on('SIGTERM', () => {
-    server.close(() => {
-        console.log('Server stopped')
-    })
-})
-
-if (debug != "false") {
-    app.get("/app/log/access", (req, res) => {
-        try {
-            const stmt = db.prepare('SELECT * FROM accesslog').all();
-            res.status(200).json(stmt)
-        } catch {
-            console.error(e)
-        }
-    });
-    app.get('/app/error', (req, res) => {
-        throw new Error('Error test successful.')
-    });
-}
